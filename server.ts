@@ -1,0 +1,518 @@
+import express from 'express';
+import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { GoogleGenAI } from '@google/genai';
+
+dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const app = express();
+const port = process.env.PORT || 3000;
+
+app.use(express.json({ limit: '10mb' }));
+
+// Initialize Google Gen AI
+const apiKey = process.env.GEMINI_API_KEY || '';
+const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
+
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    hasApiKey: !!apiKey,
+    model: 'gemini-3.8-flash',
+  });
+});
+
+// Prompt generator based on official BSKAP Kurikulum Merdeka Deep Learning (M3)
+const SYSTEM_INSTRUCTION = `Anda adalah AI Ahli Perancang Pembelajaran dan Kurikulum Merdeka BSKAP (Badan Standar, Kurikulum, dan Asesmen Pendidikan).
+Tugas utama Anda adalah menyusun Rencana Pelaksanaan Pembelajaran (RPP) Pembelajaran Mendalam (Deep Learning) secara sistematis berdasarkan Capaian Pembelajaran (CP) terbaru BSKAP.
+RPP PM yang Anda buat wajib mengedepankan suasana belajar yang berkesadaran (mindful), bermakna (meaningful), dan menggembirakan (joyful) melalui alur M3: Memahami, Mengaplikasi, dan Merefleksi.
+
+8 Dimensi Profil Lulusan (DPL):
+- DPL 1: Keimanan dan Ketakwaan terhadap Tuhan YME
+- DPL 2: Kewargaan
+- DPL 3: Penalaran Kritis
+- DPL 4: Kreativitas
+- DPL 5: Kolaborasi
+- DPL 6: Kemandirian
+- DPL 7: Kesehatan
+- DPL 8: Komunikasi
+
+RPP yang dihasilkan harus sangat terpersonalisasi, terhubung dengan profil, minat, gaya belajar, dan lingkungan tempat tinggal murid.
+
+Output Anda HARUS berupa JSON valid tanpa teks pengantar atau penutup. JSON harus mengikuti format struktur yang ditentukan.`;
+
+app.post('/api/generate-rpp', async (req, res) => {
+  const {
+    namaGuru = 'Guru Penggerak, S.Pd.',
+    nipGuru = '-',
+    kelas = 'XI',
+    fase = 'Fase F',
+    mapel = 'Bahasa Indonesia',
+    topik = 'Karya Sastra Gurindam',
+    minat = 'Musik, sosial media, game',
+    caraBelajar = 'Visual, diskusi',
+    lingkungan = 'Pesisir utara, nelayan, dan buruh',
+    alokasiWaktu = '2 x 45 Menit (1 Pertemuan)',
+    selectedDpl = [3, 4, 5],
+    satuanPendidikan = 'SMA Negeri 1 Pesisir Bahari',
+    namaDinas = 'PEMERINTAH PROVINSI / DINAS PENDIDIKAN',
+    alamatSekolah = 'Jl. Pendidikan No. 1',
+    kontakSekolah = 'Telp. (021) 123456 • info@sekolah.sch.id',
+    tampilkanKop = true,
+    namaKepalaSekolah = 'Kepala Sekolah, M.Pd.',
+    nipKepalaSekolah = '19750101 200003 1 001',
+    tempatPenetapan = 'Pesisir Bahari',
+    tanggalPenetapan = '15 Juli 2024',
+    capaianPembelajaran = '',
+    elemenCP = '',
+    pemahamanBermakna = '',
+    pertanyaanPemantik = '',
+    diferensiasiKonten = '',
+    diferensiasiProses = '',
+    diferensiasiProduk = '',
+    saranaPrasarana = '',
+  } = req.body;
+
+  const prompt = `Susunlah RPP Pembelajaran Mendalam (Deep Learning) Kurikulum Merdeka BSKAP secara komprehensif berdasarkan data berikut:
+- Nama Guru: ${namaGuru}
+- Kelas / Jenjang: ${kelas}
+- Fase: ${fase || 'Sesuai Jenjang'}
+- Mata Pelajaran: ${mapel}
+- Topik Materi: ${topik}
+- Alokasi Waktu: ${alokasiWaktu}
+- Elemen CP (jika ada): ${elemenCP || 'Tentukan elemen CP mata pelajaran yang relevan'}
+- Capaian Pembelajaran (CP): ${capaianPembelajaran || 'Rumuskan CP BSKAP yang selaras dengan topik dan fase'}
+- Pemahaman Bermakna: ${pemahamanBermakna || 'Rumuskan Big Idea / pemahaman esensial yang bermakna bagi murid'}
+- Pertanyaan Pemantik HOTS: ${pertanyaanPemantik || 'Rumuskan 3 pertanyaan pemantik esensial tingkat tinggi'}
+- Profil Murid:
+  * Minat: ${minat}
+  * Cara Belajar: ${caraBelajar}
+  * Lingkungan Tempat Tinggal: ${lingkungan}
+- Pilihan DPL yang diutamakan (pilih 2-4 yang paling esensial): nomor ${selectedDpl.join(', ')}
+- Diferensiasi Pembelajaran:
+  * Konten: ${diferensiasiKonten || 'Ragam materi berbasis profil murid'}
+  * Proses: ${diferensiasiProses || 'Scaffolding dan pendampingan bertingkat'}
+  * Produk: ${diferensiasiProduk || 'Pilihan unjuk karya kontekstual'}
+- Sarana & Prasarana: ${saranaPrasarana || 'Media digital, alat peraga kontekstual, dan lingkungan sekitar'}
+
+Pastikan alur M3 sangat kaya dan terintegrasi:
+1. Memahami (Mindful): Aktivitas pemantik untuk membangun kesadaran dan koneksi awal dengan materi (mengaitkan dengan minat dan lingkungan).
+2. Mengaplikasikan (Meaningful, Joyful): Aktivitas inti atau proyek berbasis masalah (PBL/PjBL) kontekstual dengan isu nyata di lingkungan murid, menyenangkan, interaktif.
+3. Merefleksikan (Mindful, Meaningful): Pertanyaan refleksi mendalam mengenai kebermaknaan, dampak terhadap cara berpikir, dan penerapan di dunia nyata.
+
+Wajib sertakan Lampiran Praktik Deep Learning:
+- LKPD (Lembar Kerja Peserta Didik) Tematik & Tantangan Studi Kasus Nyata
+- Lembar Refleksi Metakognitif Murid (Model 3-2-1: 3 Hal Dipahami, 2 Hal Didalami, 1 Aksi Nyata)
+- Lembar Refleksi Evaluasi Guru & Rencana Tindak Lanjut
+
+Berikan respon HANYA dalam format JSON valid dengan schema persis seperti ini:
+{
+  "identitas": {
+    "nama": "${namaGuru}",
+    "kelas": "${kelas}",
+    "fase": "${fase}",
+    "mapel": "${mapel}",
+    "topik": "${topik}",
+    "alokasiWaktu": "${alokasiWaktu}",
+    "satuanPendidikan": "${satuanPendidikan}"
+  },
+  "capaianPembelajaran": "Rumusan Capaian Pembelajaran BSKAP yang komprehensif...",
+  "elemenCP": "Nama elemen CP (misal: Menyimak / Membaca dan Memirsa / Pemahaman Konsep)...",
+  "pemahamanBermakna": "Penjelasan Big Idea pemahaman esensial yang menetap seumur hidup...",
+  "pertanyaanPemantik": [
+    "Pertanyaan pemantik HOTS 1...",
+    "Pertanyaan pemantik HOTS 2...",
+    "Pertanyaan pemantik HOTS 3..."
+  ],
+  "diferensiasiPembelajaran": {
+    "konten": "Strategi diferensiasi konten berdasarkan kesiapan dan modalitas belajar...",
+    "proses": "Strategi diferensiasi proses bimbingan bertingkat (scaffolding)...",
+    "produk": "Pilihan produk akhir sesuai minat dan profil kontekstual murid..."
+  },
+  "saranaPrasarana": "Daftar media, alat, teknologi, dan sumber belajar lingkungan...",
+  "profilMurid": {
+    "minat": "${minat}",
+    "caraBelajar": "${caraBelajar}",
+    "lingkungan": "${lingkungan}"
+  },
+  "dplTerpilih": [
+    { "id": 3, "nama": "Penalaran Kritis", "alasan": "Alasan singkat relevansi" }
+  ],
+  "desainPembelajaran": {
+    "tujuanPembelajaran": "Murid mampu...",
+    "praktikPedagogis": "Menggunakan pembelajaran berbasis proyek...",
+    "kemitraanPembelajaran": "Melibatkan pihak terkait (misal tokoh masyarakat/orang tua)...",
+    "lingkunganPembelajaran": "Pengaturan kelas dan suasana belajar...",
+    "pemanfaatanDigital": "Aplikasi atau media digital yang digunakan..."
+  },
+  "pengalamanBelajar": {
+    "memahami": {
+      "judul": "Memahami (Mindful)",
+      "langkahLangkah": [
+        "Guru menayangkan media...",
+        "Guru memberikan pertanyaan pemantik...",
+        "Murid melakukan diskusi kelompok...",
+        "Setiap kelompok presentasi...",
+        "Guru menyimpulkan..."
+      ]
+    },
+    "mengaplikasikan": {
+      "judul": "Mengaplikasikan (Meaningful, Joyful)",
+      "langkahLangkah": [
+        "Guru meminta murid observasi...",
+        "Murid mengolah hasil observasi...",
+        "Murid menciptakan produk kreatif kontekstual...",
+        "Pameran karya atau unjuk karya menyenangkan..."
+      ]
+    },
+    "merefleksikan": {
+      "judul": "Merefleksikan (Mindful, Meaningful)",
+      "pertanyaanRefleksi": [
+        "Apa yang membuat karya kalian bermakna?",
+        "Bagaimana proses ini memengaruhi cara kalian berpikir tentang isu sekitar?",
+        "Apa yang dapat kalian terapkan di kehidupan nyata dari pembelajaran ini?"
+      ],
+      "aktivitasRefleksi": "Deskripsi aktivitas penutup refleksi..."
+    }
+  },
+  "asesmen": {
+    "awal": "Assessment of Learning / Diagnostik (Angket / Kuis Pemantik / Asesmen diagnostik non-kognitif & kognitif)",
+    "proses": "Assessment as Learning (Self Assessment, Peer Assessment, Lembar Observasi)",
+    "akhir": "Assessment for Learning (Produk kreatif / Proyek kontekstual / Portofolio)"
+  },
+  "rubrikPenilaian": [
+    {
+      "kriteria": "Nama Kriteria 1",
+      "baruMemulai": "Deskripsi tingkat baru memulai",
+      "berkembang": "Deskripsi tingkat berkembang",
+      "cakap": "Deskripsi tingkat cakap",
+      "sangatBerkembang": "Deskripsi tingkat sangat berkembang"
+    }
+  ],
+  "lkpd": {
+    "judul": "Judul LKPD Tematik...",
+    "tujuanAktivitas": "Tujuan eksplorasi pada LKPD...",
+    "petunjukKerja": [
+      "Langkah petunjuk 1...",
+      "Langkah petunjuk 2...",
+      "Langkah petunjuk 3..."
+    ],
+    "studiKasusTantangan": "Uraian studi kasus kontekstual nyata di lingkungan sekitar...",
+    "pertanyaanPanduan": [
+      "Pertanyaan analisis kritis 1...",
+      "Pertanyaan analisis kritis 2...",
+      "Pertanyaan analisis kritis 3..."
+    ]
+  },
+  "refleksiMurid": {
+    "model321": {
+      "tigaHalDipahami": "1. ... 2. ... 3. ...",
+      "duaHalDidalami": "1. ... 2. ...",
+      "satuAksiNyata": "1. ..."
+    },
+    "pertanyaanMetakognisi": [
+      "Pertanyaan metakognisi 1...",
+      "Pertanyaan metakognisi 2..."
+    ]
+  },
+  "refleksiGuru": {
+    "pertanyaanRefleksi": [
+      "Pertanyaan evaluasi diri guru 1...",
+      "Pertanyaan evaluasi diri guru 2..."
+    ],
+    "tindakLanjut": "Rencana tindak lanjut dan perbaikan siklus berikutnya..."
+  }
+}`;
+
+  if (ai) {
+    try {
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.8-flash',
+        contents: prompt,
+        config: {
+          systemInstruction: SYSTEM_INSTRUCTION,
+          responseMimeType: 'application/json',
+          temperature: 0.7,
+        },
+      });
+
+      const text = response.text || '';
+      try {
+        const parsed = JSON.parse(text);
+        parsed.kopSekolah = {
+          tampilkanKop,
+          namaDinas,
+          namaSekolah: satuanPendidikan,
+          alamatSekolah,
+          kontakSekolah,
+        };
+        parsed.pengesahan = {
+          tempatPenetapan,
+          tanggalPenetapan,
+          namaKepalaSekolah,
+          nipKepalaSekolah,
+          namaGuru,
+          nipGuru,
+        };
+        return res.json({ success: true, data: parsed, source: 'gemini' });
+      } catch (err) {
+        // extract json block if wrapped in markdown
+        const match = text.match(/\{[\s\S]*\}/);
+        if (match) {
+          const parsed = JSON.parse(match[0]);
+          parsed.kopSekolah = {
+            tampilkanKop,
+            namaDinas,
+            namaSekolah: satuanPendidikan,
+            alamatSekolah,
+            kontakSekolah,
+          };
+          parsed.pengesahan = {
+            tempatPenetapan,
+            tanggalPenetapan,
+            namaKepalaSekolah,
+            nipKepalaSekolah,
+            namaGuru,
+            nipGuru,
+          };
+          return res.json({ success: true, data: parsed, source: 'gemini' });
+        }
+      }
+    } catch (apiError: any) {
+      console.warn('Gemini API call failed, using intelligent contextual generator fallback:', apiError?.message);
+    }
+  }
+
+  // High quality contextual fallback generator matching BSKAP template
+  const fallbackData = generateFallbackRPP({
+    namaGuru,
+    nipGuru,
+    kelas,
+    mapel,
+    topik,
+    minat,
+    caraBelajar,
+    lingkungan,
+    alokasiWaktu,
+    selectedDpl,
+    satuanPendidikan,
+    namaDinas,
+    alamatSekolah,
+    kontakSekolah,
+    tampilkanKop,
+    namaKepalaSekolah,
+    nipKepalaSekolah,
+    tempatPenetapan,
+    tanggalPenetapan,
+  });
+
+  return res.json({ success: true, data: fallbackData, source: 'fallback' });
+});
+
+// Refine section endpoint
+app.post('/api/refine-section', async (req, res) => {
+  const { sectionName, currentContent, instruction } = req.body;
+
+  if (!ai) {
+    return res.status(400).json({
+      error: 'Fitur penyempurnaan AI membutuhkan GEMINI_API_KEY aktif.',
+    });
+  }
+
+  try {
+    const prompt = `Anda adalah pakar Kurikulum Merdeka BSKAP untuk Pembelajaran Mendalam (Deep Learning).
+Perbaiki atau kembangkan bagian "${sectionName}" berikut berdasarkan instruksi: "${instruction}".
+
+Konten saat ini:
+${typeof currentContent === 'object' ? JSON.stringify(currentContent, null, 2) : currentContent}
+
+Kembalikan hasil revisi yang telah disesuaikan dan siap pakai, mempertahankan nuansa Mindful, Meaningful, dan Joyful serta konteks murid.`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.8-flash',
+      contents: prompt,
+      config: {
+        systemInstruction: SYSTEM_INSTRUCTION,
+      },
+    });
+
+    return res.json({ success: true, revisedContent: response.text });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || 'Gagal memproses perbaikan.' });
+  }
+});
+
+// Helper for deterministic high-fidelity fallback generator matching BSKAP
+function generateFallbackRPP(params: {
+  namaGuru: string;
+  nipGuru?: string;
+  kelas: string;
+  mapel: string;
+  topik: string;
+  minat: string;
+  caraBelajar: string;
+  lingkungan: string;
+  alokasiWaktu: string;
+  selectedDpl: number[];
+  satuanPendidikan?: string;
+  namaDinas?: string;
+  alamatSekolah?: string;
+  kontakSekolah?: string;
+  tampilkanKop?: boolean;
+  namaKepalaSekolah?: string;
+  nipKepalaSekolah?: string;
+  tempatPenetapan?: string;
+  tanggalPenetapan?: string;
+}) {
+  const DPL_MAP: Record<number, { nama: string; defaultAlasan: string }> = {
+    1: { nama: 'Keimanan dan Ketakwaan terhadap Tuhan YME', defaultAlasan: 'Menghubungkan rasa syukur atas ciptaan dan keteraturan alam/sosial.' },
+    2: { nama: 'Kewargaan', defaultAlasan: 'Membangun kepedulian terhadap isu sosial dan kearifan lokal masyarakat.' },
+    3: { nama: 'Penalaran Kritis', defaultAlasan: 'Menganalisis sebab-akibat, membedah teks/masalah kontekstual secara logis.' },
+    4: { nama: 'Kreativitas', defaultAlasan: 'Menghasilkan inovasi karya yang ekspresif, kontekstual, dan memecahkan masalah.' },
+    5: { nama: 'Kolaborasi', defaultAlasan: 'Bekerja sama dalam kelompok heterogen, saling mendengarkan dan berbagi peran.' },
+    6: { nama: 'Kemandirian', defaultAlasan: 'Menumbuhkan tanggung jawab pribadi dalam eksplorasi dan pengambilan keputusan belajar.' },
+    7: { nama: 'Kesehatan', defaultAlasan: 'Menjaga keseimbangan raga, emosi, dan kesehatan lingkungan hidup.' },
+    8: { nama: 'Komunikasi', defaultAlasan: 'Menyampaikan gagasan secara artikulatif, empatik, dan persuasif di depan audiens.' },
+  };
+
+  const dplList = params.selectedDpl.map((id) => ({
+    id,
+    nama: DPL_MAP[id]?.nama || `DPL ${id}`,
+    alasan: DPL_MAP[id]?.defaultAlasan || 'Mendukung kompetensi esensial materi.',
+  }));
+
+  return {
+    identitas: {
+      nama: params.namaGuru,
+      kelas: params.kelas,
+      mapel: params.mapel,
+      topik: params.topik,
+      alokasiWaktu: params.alokasiWaktu,
+      satuanPendidikan: params.satuanPendidikan || 'SEKOLAH PENGGERAK',
+    },
+    kopSekolah: {
+      tampilkanKop: params.tampilkanKop ?? true,
+      namaDinas: params.namaDinas || 'DINAS PENDIDIKAN DAN KEBUDAYAAN',
+      namaSekolah: params.satuanPendidikan || 'SEKOLAH PENGGERAK',
+      alamatSekolah: params.alamatSekolah || 'Jl. Pendidikan Nasional No. 1',
+      kontakSekolah: params.kontakSekolah || 'Telp: (021) 1234567 • Pos-el: info@sekolah.sch.id',
+    },
+    pengesahan: {
+      tempatPenetapan: params.tempatPenetapan || 'Kota',
+      tanggalPenetapan: params.tanggalPenetapan || '15 Juli 2024',
+      namaKepalaSekolah: params.namaKepalaSekolah || 'Drs. H. Bambang Sudiro, M.Pd.',
+      nipKepalaSekolah: params.nipKepalaSekolah || '19720412 199802 1 004',
+      namaGuru: params.namaGuru,
+      nipGuru: params.nipGuru || '19890615 201503 1 002',
+    },
+    profilMurid: {
+      minat: params.minat,
+      caraBelajar: params.caraBelajar,
+      lingkungan: params.lingkungan,
+    },
+    dplTerpilih: dplList,
+    desainPembelajaran: {
+      tujuanPembelajaran: `Murid mampu memahami konsep mendalam tentang ${params.topik} dan mengaplikasikannya dalam konteks kehidupan sehari-hari serta isu nyata di lingkungan ${params.lingkungan}.`,
+      praktikPedagogis: `Menggunakan pembelajaran berbasis proyek (PjBL) kontekstual dan berbasis masalah (PBL). Murid diajak membuat karya yang mengangkat nilai-nilai esensial materi ${params.topik} dan menghubungkannya dengan realitas kehidupan di lingkungan ${params.lingkungan}. Produk disesuaikan dengan minat murid (${params.minat}), seperti: poster visual/infografis digital, konten video pendek/reels, atau karya analogi kreatif.`,
+      kemitraanPembelajaran: `Melibatkan orang tua, tokoh masyarakat, dan praktisi lokal di lingkungan ${params.lingkungan} sebagai narasumber cerita autentik maupun mitra apresiasi karya murid.`,
+      lingkunganPembelajaran: `Kelas diatur fleksibel menjadi zona eksplorasi, kolaborasi, dan presentasi. Disediakan papan ide fisik/digital (Sticky Board) dan dinding refleksi bersama. Guru mengondisikan iklim belajar yang aman secara psikologis, ramah kekeliruan, dan suportif.`,
+      pemanfaatanDigital: `Murid memanfaatkan aplikasi desain kreatif (misalnya Canva, CapCut) untuk mengemas karya, platform kurasi ide bersama (Padlet/Jamboard), serta media presentasi interaktif dan media sosial edukatif.`,
+    },
+    pengalamanBelajar: {
+      memahami: {
+        judul: 'Memahami (Mindful)',
+        langkahLangkah: [
+          `Guru menghadirkan momen berkesadaran (Mindful Moment) berupa tayangan video/audio/gambar pemantik kontekstual terkait "${params.topik}" yang beririsan dengan minat murid (${params.minat}) dan lingkungan mereka (${params.lingkungan}).`,
+          `Guru mengajukan pertanyaan pemantik berkesadaran: "Apa hubungan pola fenomena dalam materi ini dengan pengalaman yang kalian lihat setiap hari di lingkungan kita? Mengapa hal ini penting bagi kita?"`,
+          `Murid dalam kelompok kecil berdiskusi secara mindful mengamati contoh autentik, mengidentifikasi pola kunci, struktur, dan makna esensial materi.`,
+          `Setiap kelompok berbagi temuan awal secara singkat, sementara kelompok lain menyimak dengan aktif dan saling memberikan apresiasi atau umpan balik positif.`,
+          `Guru bersama murid menarik benang merah, mengonfirmasi pemahaman konsep inti secara komprehensif, dan meluruskan miskonsepsi.`
+        ]
+      },
+      mengaplikasikan: {
+        judul: 'Mengaplikasikan (Meaningful, Joyful)',
+        langkahLangkah: [
+          `Guru memandu murid melakukan observasi atau investigasi kontekstual mengenai permasalahan/isu nyata yang ada di lingkungan sekolah atau tempat tinggal (${params.lingkungan}).`,
+          `Sebelum observasi, guru membimbing murid memahami rubrik dan instrumen observasi agar fokus pengamatan terarah dengan jelas.`,
+          `Kelompok murid memetakan data hasil temuan, menyusun hubungan sebab-akibat, dan menyepakati ide solusi/kampanye kreatif bertema "${params.topik}".`,
+          `Murid memproduksi karya bermakna yang menggembirakan sesuai minat dan gaya belajar (${params.caraBelajar}), seperti konten edukasi visual, modul mini, video reels/podcast, atau poster kampanye sosial.`,
+          `Festival Belajar / Gelar Karya Kelas: Murid memamerkan karya dalam suasana yang meriah dan saling memberikan "bintang apresiasi" (Joyful Peer Review).`
+        ]
+      },
+      merefleksikan: {
+        judul: 'Merefleksikan (Mindful, Meaningful)',
+        pertanyaanRefleksi: [
+          `Apa yang membuat proses dan karya yang kalian hasilkan hari ini terasa bermakna bagi diri sendiri dan orang lain?`,
+          `Bagaimana pemahaman baru tentang "${params.topik}" ini memengaruhi sudut pandang kalian terhadap lingkungan sekitar?`,
+          `Tindakan nyata apa yang dapat segera kalian terapkan dalam kehidupan sehari-hari berdasarkan pembelajaran ini?`
+        ],
+        aktivitasRefleksi: `Murid menuliskan refleksi "Tiga Mutiara Pemikiran" pada lembar jurnal refleksi atau papan digital, lalu hening sejenak (mindful breathing) untuk menginternalisasi nilai-nilai kebaikan yang dipelajari.`
+      }
+    },
+    asesmen: {
+      awal: `Assessment of Learning (Awal): Angket minat & pemetaan awal (asesmen diagnostik non-kognitif serta kuis pemantik konsep dasar secara visual/interaktif).`,
+      proses: `Assessment as Learning (Proses): Lembar Self-Assessment & Peer Assessment berkala menggunakan panduan umpan balik terstruktur (Rubrik Observasi Partisipasi).`,
+      akhir: `Assessment for Learning (Akhir): Asesmen Produk Kreatif Kontekstual & Presentasi Kampanye Solusi yang mengaitkan nilai materi dengan lingkungan nyata murid.`
+    },
+    rubrikPenilaian: [
+      {
+        kriteria: `1. Pemahaman Konsep Dasar dan Esensi ${params.topik}`,
+        baruMemulai: `Menyebutkan konsep dasar secara terbatas dan minim konteks; pemahaman atas ciri khas materi belum konsisten atau sekadar mengulang definisi literal.`,
+        berkembang: `Menyebutkan beberapa prinsip esensial materi dengan penjelasan sederhana; mulai mengaitkan dengan contoh meski belum mendalam.`,
+        cakap: `Menjelaskan dengan jelas struktur, esensi konsep, dan latar belakang kontekstual dengan penalaran logis serta relevansi nyata.`,
+        sangatBerkembang: `Menguraikan secara komprehensif, kritis, dan inovatif; mampu menghubungkan konsep silang dengan wawasan terkini dan nilai kearifan lokal.`
+      },
+      {
+        kriteria: `2. Analisis Kontekstual dan Penalaran Kritis`,
+        baruMemulai: `Analisis masih bersifat permukaan; belum mampu mengaitkan materi dengan isu nyata di lingkungan sekitar.`,
+        berkembang: `Menunjukkan upaya awal menghubungkan konsep dengan masalah di lingkungan; analisis masih deskriptif umum.`,
+        cakap: `Menganalisis hubungan sebab-akibat secara logis berdasarkan bukti observasi autentik di lingkungan sekitar secara sistematis.`,
+        sangatBerkembang: `Melakukan analisis mendalam berdaya nalar kritis tinggi; menghasilkan sudut pandang baru yang tajam dan solusi solutif.`
+      },
+      {
+        kriteria: `3. Kolaborasi dan Dinamika Kelompok`,
+        baruMemulai: `Partisipasi minimal dalam kelompok; belum menunjukkan inisiatif aktif bertukar gagasan secara konstruktif.`,
+        berkembang: `Aktif menyimak dan menyampaikan pendapat sederhana; mulai berkolaborasi menjalankan tugas yang diberikan.`,
+        cakap: `Berkolaborasi proaktif, menghargai perbedaan gagasan, dan efektif mengintegrasikan kontribusi seluruh anggota tim.`,
+        sangatBerkembang: `Menunjukkan kepemimpinan empatik, menginspirasi dinamika diskusi bermakna, dan memfasilitasi kerja tim secara inklusif.`
+      },
+      {
+        kriteria: `4. Kreativitas dan Kualitas Produk Nyata`,
+        baruMemulai: `Karya masih meniru format umum tanpa sentuhan inovasi; pengaitan dengan minat dan isu lingkungan minim.`,
+        berkembang: `Mulai memadukan minat murid ke dalam produk; visual atau pesan sudah cukup komunikatif meski standar.`,
+        cakap: `Mengemas gagasan secara orisinal, menarik, dan selaras dengan gaya belajar murid serta media digital yang dipilih.`,
+        sangatBerkembang: `Karya sangat orisinal, berdampak nyata, estetis, dan memiliki daya gugah tinggi bagi masyarakat sekolah dan lingkungan sekitar.`
+      }
+    ]
+  };
+}
+
+// Vite integration
+async function startServer() {
+  const isProd = process.env.NODE_ENV === 'production';
+
+  if (!isProd) {
+    const { createServer: createViteServer } = await import('vite');
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: 'spa',
+    });
+    app.use(vite.middlewares);
+  } else {
+    app.use(express.static(path.join(__dirname, 'dist')));
+    app.get('*', (req, res) => {
+      res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+    });
+  }
+
+  app.listen(port, () => {
+    console.log(`Server running at http://localhost:${port}`);
+  });
+}
+
+startServer();
