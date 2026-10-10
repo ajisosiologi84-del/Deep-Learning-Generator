@@ -31,6 +31,7 @@ import {
   FileText,
   HelpCircle,
   Database,
+  Globe,
 } from 'lucide-react';
 import { tokenService } from '../services/tokenService';
 import { webhookService, GOOGLE_APPS_SCRIPT_TEMPLATE } from '../services/webhookService';
@@ -113,6 +114,18 @@ export const AdminTokenManagerModal: React.FC<AdminTokenManagerModalProps> = ({
     setSupabaseUrlInput(sb.supabaseUrl);
     setSupabaseAnonKeyInput(sb.supabaseAnonKey);
     setSupabaseTestResult(null);
+
+    // Asynchronously fetch latest global server configuration
+    supabaseService.syncFromGlobalServer().then((latestSb) => {
+      setSupabaseConfig(latestSb);
+      if (latestSb.supabaseUrl) setSupabaseUrlInput(latestSb.supabaseUrl);
+      if (latestSb.supabaseAnonKey) setSupabaseAnonKeyInput(latestSb.supabaseAnonKey);
+    }).catch(() => {});
+
+    webhookService.syncFromGlobalServer().then((latestWh) => {
+      setWebhookConfig(latestWh);
+      if (latestWh.webhookUrl) setWebhookUrlInput(latestWh.webhookUrl);
+    }).catch(() => {});
 
     setStatusMessage(null);
   };
@@ -242,14 +255,15 @@ export const AdminTokenManagerModal: React.FC<AdminTokenManagerModalProps> = ({
     URL.revokeObjectURL(url);
   };
 
-  const handleSaveWebhookConfig = (e: React.FormEvent) => {
+  const handleSaveWebhookConfig = async (e: React.FormEvent) => {
     e.preventDefault();
-    const updated = webhookService.updateWebhookConfig({
+    const updated = await webhookService.saveWebhookConfigToServer({
       ...webhookConfig,
       webhookUrl: webhookUrlInput.trim(),
+      enabled: Boolean(webhookUrlInput.trim()),
     });
     setWebhookConfig(updated);
-    showStatus('success', 'Konfigurasi Webhook Google Sheets berhasil disimpan!');
+    showStatus('success', 'Konfigurasi Webhook berhasil disimpan permanen di server! Semua browser guru otomatis terhubung.');
   };
 
   const handleTestPing = async () => {
@@ -299,15 +313,16 @@ export const AdminTokenManagerModal: React.FC<AdminTokenManagerModalProps> = ({
     showStatus('success', 'Riwayat log lokal berhasil dibersihkan.');
   };
 
-  const handleSaveSupabaseConfig = (e: React.FormEvent) => {
+  const handleSaveSupabaseConfig = async (e: React.FormEvent) => {
     e.preventDefault();
-    const updated = supabaseService.saveConfig({
+    const updated = await supabaseService.saveConfigToServer({
       ...supabaseConfig,
       supabaseUrl: supabaseUrlInput.trim(),
       supabaseAnonKey: supabaseAnonKeyInput.trim(),
+      enabled: Boolean(supabaseUrlInput.trim() && supabaseAnonKeyInput.trim()),
     });
     setSupabaseConfig(updated);
-    showStatus('success', 'Konfigurasi Supabase Cloud berhasil disimpan!');
+    showStatus('success', 'Konfigurasi Supabase Cloud berhasil disimpan permanen di server! Semua browser & seluruh guru otomatis terhubung.');
   };
 
   const handleTestSupabaseConnection = async () => {
@@ -1016,6 +1031,19 @@ export const AdminTokenManagerModal: React.FC<AdminTokenManagerModalProps> = ({
 
               {/* Webhook Configuration Form */}
               <form onSubmit={handleSaveWebhookConfig} className="p-4 sm:p-5 bg-slate-50 border border-slate-200 rounded-2xl space-y-4">
+                {/* Global Multi-Browser Sync Banner */}
+                <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl flex items-start gap-2.5 text-xs text-blue-900">
+                  <Globe className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                  <div className="space-y-0.5">
+                    <span className="font-bold text-blue-950 block">
+                      Tersimpan Global untuk Semua Browser & Seluruh Perangkat Guru (Cukup Atur 1x)
+                    </span>
+                    <p className="text-[11px] text-blue-800 leading-relaxed">
+                      Konfigurasi webhook ini disimpan di server aplikasi. Anda tidak perlu memasukkannya lagi saat berganti browser atau saat guru mengakses dari HP/laptop mereka.
+                    </p>
+                  </div>
+                </div>
+
                 <div className="flex items-center justify-between border-b border-slate-200 pb-3">
                   <div className="flex items-center gap-2">
                     <Send className="w-4 h-4 text-emerald-600" />
@@ -1324,6 +1352,20 @@ export const AdminTokenManagerModal: React.FC<AdminTokenManagerModalProps> = ({
                 </p>
               </div>
 
+              {/* Multi-Browser & Global Server Persistence Notice */}
+              <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-start gap-3">
+                <Globe className="w-5 h-5 text-emerald-700 shrink-0 mt-0.5" />
+                <div className="space-y-1 text-xs">
+                  <p className="font-bold text-emerald-950 flex items-center gap-2">
+                    Sinkronisasi Server Global Aktif (Multi-Browser & Multi-Perangkat)
+                    <span className="px-2 py-0.5 text-[10px] font-bold bg-emerald-200 text-emerald-900 rounded-full">Cukup Atur 1x</span>
+                  </p>
+                  <p className="text-[11px] text-emerald-800 leading-relaxed">
+                    <strong>Tidak perlu mengatur ulang setiap ganti browser!</strong> Setelah Anda menyimpan Project URL dan Anon Key di bawah ini, konfigurasi disimpan permanen di server aplikasi. Semua browser guru (Chrome, Edge, Safari), laptop lain, maupun HP akan <strong>langsung otomatis terhubung</strong> tanpa perlu setting lagi.
+                  </p>
+                </div>
+              </div>
+
               {/* Status & Sync Actions */}
               <div className="p-4 bg-white border border-slate-200 rounded-2xl space-y-4 shadow-2xs">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
@@ -1340,11 +1382,11 @@ export const AdminTokenManagerModal: React.FC<AdminTokenManagerModalProps> = ({
                   </div>
                   <button
                     type="button"
-                    onClick={() => {
+                    onClick={async () => {
                       const newStatus = !supabaseConfig.enabled;
-                      const updated = supabaseService.saveConfig({ enabled: newStatus });
+                      const updated = await supabaseService.saveConfigToServer({ enabled: newStatus });
                       setSupabaseConfig(updated);
-                      showStatus('success', newStatus ? 'Supabase Cloud diaktifkan!' : 'Supabase dinonaktifkan (mode lokal).');
+                      showStatus('success', newStatus ? 'Supabase Cloud diaktifkan di server untuk semua browser!' : 'Supabase dinonaktifkan (mode lokal).');
                     }}
                     className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 ${
                       supabaseConfig.enabled

@@ -284,31 +284,139 @@ export const tokenService = {
    * Asynchronous validation supporting Supabase Cloud as primary gate
    */
   async validateTokenAsync(tokenInput: string): Promise<TokenValidationResult> {
-    // 1. If Supabase is configured & enabled, try verifying directly against Supabase Cloud
+    const cleaned = tokenInput.trim();
+    if (!cleaned) {
+      return { valid: false, message: 'Silakan masukkan kode token akses!' };
+    }
+
+    // 0. Quick check for Master Admin Passcode
+    const config = this.getAdminConfig();
+    if (cleaned === config.adminPasscode) {
+      return {
+        valid: true,
+        message: 'Berhasil login sebagai Administrator!',
+        isAdminPasscode: true,
+        tokenData: {
+          id: 'admin-master',
+          token: 'MASTER-ADMIN',
+          label: 'Super Administrator',
+          role: 'admin',
+          maxUses: -1,
+          usedCount: 1,
+          expiresAt: null,
+          isActive: true,
+          createdAt: new Date().toISOString(),
+          notes: 'Sesi login via Master Admin Passcode',
+        },
+      };
+    }
+
+    // 1. Primary: Verify via Server-side Proxy (/api/validate-token)
+    // This completely circumvents browser CORS, ad-blockers, and 3rd-party cookie restrictions
+    try {
+      const apiRes = await fetch('/api/validate-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: cleaned }),
+      });
+      if (apiRes.ok) {
+        const apiData = await apiRes.json();
+        if (apiData.valid && apiData.tokenData) {
+          // Sync token into local storage for offline access
+          const tokens = this.getAllTokens();
+          const existingIdx = tokens.findIndex((t) => t.token.toUpperCase() === apiData.tokenData.token.toUpperCase());
+          if (existingIdx >= 0) {
+            tokens[existingIdx] = apiData.tokenData;
+          } else {
+            tokens.unshift(apiData.tokenData);
+          }
+          this.saveTokens(tokens);
+          return apiData;
+        }
+
+        // If explicitly restricted by status/expiration/quota, return server diagnostic
+        if (apiData.message && (
+          apiData.message.includes('dinonaktifkan') || 
+          apiData.message.includes('habis') || 
+          apiData.message.includes('kedaluwarsa')
+        )) {
+          return apiData;
+        }
+      }
+    } catch (apiErr) {
+      console.warn('Backend proxy validation failed, attempting client fallback:', apiErr);
+    }
+
+    // 2. Secondary: If server endpoint is unreachable, verify directly from client to Supabase
     if (supabaseService.isConfigured()) {
       try {
-        const cloudResult = await supabaseService.validateTokenFromCloud(tokenInput);
-        if (cloudResult) {
-          // If validated on cloud, also cache/sync to local token store for seamless offline usage
-          if (cloudResult.valid && cloudResult.tokenData) {
-            const tokens = this.getAllTokens();
-            const existingIdx = tokens.findIndex((t) => t.token.toUpperCase() === cloudResult.tokenData!.token.toUpperCase());
-            if (existingIdx >= 0) {
-              tokens[existingIdx] = cloudResult.tokenData;
-            } else {
-              tokens.unshift(cloudResult.tokenData);
-            }
-            this.saveTokens(tokens);
+        const cloudResult = await supabaseService.validateTokenFromCloud(cleaned);
+        if (cloudResult && cloudResult.valid && cloudResult.tokenData) {
+          const tokens = this.getAllTokens();
+          const existingIdx = tokens.findIndex((t) => t.token.toUpperCase() === cloudResult.tokenData!.token.toUpperCase());
+          if (existingIdx >= 0) {
+            tokens[existingIdx] = cloudResult.tokenData;
+          } else {
+            tokens.unshift(cloudResult.tokenData);
           }
+          this.saveTokens(tokens);
           return cloudResult;
         }
       } catch (err) {
-        console.warn('Supabase cloud check failed, falling back to local database:', err);
+        console.warn('Direct client Supabase check failed, checking local database:', err);
       }
     }
 
-    // 2. Fallback to Local DB verification
-    return this.validateToken(tokenInput);
+    // 3. Tertiary: Fallback to Local DB verification
+    const localResult = this.validateToken(cleaned);
+    return localResult;
+  },
+
+  /**
+   * Syncs all active cloud tokens from Supabase into this browser's local database
+   */
+  async syncCloudTokens(): Promise<AppToken[]> {
+    try {
+      // 1. Try server endpoint
+      const res = await fetch('/api/tokens/cloud');
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.success && Array.isArray(data.tokens) && data.tokens.length > 0) {
+          const cloudTokens: AppToken[] = data.tokens.map((row: any) => ({
+            id: row.id || `tok-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+            token: row.token,
+            label: row.label,
+            schoolName: row.school_name || '',
+            role: row.role || 'guru',
+            maxUses: typeof row.max_uses === 'number' ? row.max_uses : -1,
+            usedCount: typeof row.used_count === 'number' ? row.used_count : 0,
+            expiresAt: row.expires_at || null,
+            isActive: Boolean(row.is_active),
+            createdAt: row.created_at || new Date().toISOString(),
+            notes: row.notes || '',
+          }));
+          this.saveTokens(cloudTokens);
+          return cloudTokens;
+        }
+      }
+    } catch (e) {
+      // Fallback to direct client pull
+    }
+
+    // 2. Fallback to direct client pull if configured
+    if (supabaseService.isConfigured()) {
+      try {
+        const pullRes = await supabaseService.pullTokensFromSupabase();
+        if (pullRes.success && pullRes.tokens.length > 0) {
+          this.saveTokens(pullRes.tokens);
+          return pullRes.tokens;
+        }
+      } catch (e) {
+        // quiet
+      }
+    }
+
+    return this.getAllTokens();
   },
 
   getActiveSession(): TokenSession | null {

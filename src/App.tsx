@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { RPPData, RPPInputFormState } from './types/rpp';
 import { PRESETS } from './data/presets';
 import { generateRPP } from './services/rppService';
@@ -18,6 +18,7 @@ import { InactivityWarningModal } from './components/InactivityWarningModal';
 import { useInactivityAutoLogout } from './hooks/useInactivityAutoLogout';
 import { tokenService } from './services/tokenService';
 import { webhookService } from './services/webhookService';
+import { supabaseService } from './services/supabaseService';
 import { TokenSession, AdminConfig } from './types/token';
 import {
   Sparkles,
@@ -52,6 +53,14 @@ export default function App() {
       return true;
     }
   });
+
+  // Automatically sync Supabase & Google Apps Script configuration and all cloud tokens from global server
+  // Ensures any browser, new teacher device, or incognito session connects automatically and has all 33 tokens
+  useEffect(() => {
+    supabaseService.syncFromGlobalServer().catch(() => {});
+    webhookService.syncFromGlobalServer().catch(() => {});
+    tokenService.syncCloudTokens().catch(() => {});
+  }, []);
 
   // Handle User Logout explicitly or automatically
   const handleLogout = (reason?: 'inactivity' | 'user') => {

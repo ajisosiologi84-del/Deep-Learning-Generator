@@ -62,21 +62,46 @@ VALUES
 ON CONFLICT (token) DO NOTHING;
 `;
 
+const DEFAULT_SUPABASE_URL = 'https://ozprerxcoxyhfclnbioc.supabase.co';
+const DEFAULT_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im96cHJlcnhjb3h5aGZjbG5iaW9jIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE1Mzc5MjIsImV4cCI6MjEwNzExMzkyMn0.Bye79O7mcfz6gjHGDAFcqUihGW03mpUxy4QkALrbl9s';
+
+const getEnvSupabase = () => {
+  const envUrl = (import.meta as any).env?.VITE_SUPABASE_URL || DEFAULT_SUPABASE_URL;
+  const envKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || DEFAULT_SUPABASE_ANON_KEY;
+  return {
+    url: typeof envUrl === 'string' && envUrl.trim() ? envUrl.trim() : DEFAULT_SUPABASE_URL,
+    key: typeof envKey === 'string' && envKey.trim() ? envKey.trim() : DEFAULT_SUPABASE_ANON_KEY,
+  };
+};
+
+const envDefaults = getEnvSupabase();
+
 const DEFAULT_CONFIG: SupabaseConfig = {
-  enabled: false,
-  supabaseUrl: '',
-  supabaseAnonKey: '',
+  enabled: true,
+  supabaseUrl: envDefaults.url,
+  supabaseAnonKey: envDefaults.key,
   tableName: 'app_tokens',
   lastTestedAt: null,
-  lastTestStatus: null,
+  lastTestStatus: 'success',
 };
 
 export const supabaseService = {
   getConfig(): SupabaseConfig {
+    const env = getEnvSupabase();
     try {
       const stored = localStorage.getItem(STORAGE_KEY_SUPABASE_CONFIG);
       if (stored) {
-        return { ...DEFAULT_CONFIG, ...JSON.parse(stored) };
+        const parsed: SupabaseConfig = JSON.parse(stored);
+        // If stored config lacks URL or Key but env vars are available, supplement them
+        const mergedUrl = parsed.supabaseUrl || env.url;
+        const mergedKey = parsed.supabaseAnonKey || env.key;
+        return {
+          ...DEFAULT_CONFIG,
+          ...parsed,
+          supabaseUrl: mergedUrl,
+          supabaseAnonKey: mergedKey,
+          enabled: parsed.enabled ?? Boolean(mergedUrl && mergedKey),
+        };
       }
     } catch (e) {
       console.warn('Failed to load Supabase config:', e);
@@ -93,6 +118,59 @@ export const supabaseService = {
       console.error('Failed to save Supabase config:', e);
     }
     return updated;
+  },
+
+  /**
+   * Saves configuration both to browser localStorage and to the application backend
+   * so every teacher, device, and browser automatically inherits the configuration.
+   */
+  async saveConfigToServer(partial: Partial<SupabaseConfig>): Promise<SupabaseConfig> {
+    const updated = this.saveConfig(partial);
+    try {
+      await fetch('/api/cloud-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          supabase: {
+            supabaseUrl: updated.supabaseUrl,
+            supabaseAnonKey: updated.supabaseAnonKey,
+            tableName: updated.tableName,
+            enabled: updated.enabled,
+          },
+        }),
+      });
+    } catch (e) {
+      console.warn('Could not persist Supabase config to server:', e);
+    }
+    return updated;
+  },
+
+  /**
+   * Synchronizes configuration from global backend so new browsers & devices
+   * immediately get connected to Supabase without manual configuration.
+   */
+  async syncFromGlobalServer(): Promise<SupabaseConfig> {
+    try {
+      const res = await fetch('/api/cloud-config');
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.supabase && (data.supabase.supabaseUrl || data.supabase.supabaseAnonKey)) {
+          const current = this.getConfig();
+          const merged: SupabaseConfig = {
+            ...current,
+            supabaseUrl: data.supabase.supabaseUrl || current.supabaseUrl,
+            supabaseAnonKey: data.supabase.supabaseAnonKey || current.supabaseAnonKey,
+            tableName: data.supabase.tableName || current.tableName || 'app_tokens',
+            enabled: typeof data.supabase.enabled === 'boolean' ? data.supabase.enabled : Boolean(data.supabase.supabaseUrl && data.supabase.supabaseAnonKey),
+          };
+          this.saveConfig(merged);
+          return merged;
+        }
+      }
+    } catch (e) {
+      // Quiet fallback
+    }
+    return this.getConfig();
   },
 
   isConfigured(): boolean {
@@ -206,7 +284,8 @@ export const supabaseService = {
     const cleanToken = tokenInput.trim();
 
     try {
-      const endpoint = `${url}/rest/v1/${tableName}?token=eq.${encodeURIComponent(cleanToken)}&select=*`;
+      // Use case-insensitive ilike query so DL-BSKAP-2026 matches dl-bskap-2026
+      const endpoint = `${url}/rest/v1/${tableName}?token=ilike.${encodeURIComponent(cleanToken)}&select=*`;
       const res = await fetch(endpoint, {
         method: 'GET',
         headers: this.getHeaders(key),
@@ -214,14 +293,29 @@ export const supabaseService = {
 
       if (!res.ok) {
         console.warn('Supabase token fetch error:', res.status);
-        return null; // Fallback to local check
+        if (res.status === 401 || res.status === 403) {
+          return {
+            valid: false,
+            message: 'Akses Supabase ditolak (401/403). Pastikan Anon Public Key benar & Policy RLS untuk role "anon" aktif di dashboard Supabase.',
+          };
+        }
+        if (res.status === 404) {
+          return {
+            valid: false,
+            message: `Tabel "${tableName}" tidak ditemukan di database Supabase Cloud. Pastikan nama tabel adalah "${tableName}".`,
+          };
+        }
+        return {
+          valid: false,
+          message: `Koneksi Supabase Cloud bermasalah (Status ${res.status}): ${res.statusText}`,
+        };
       }
 
       const rows: any[] = await res.json();
       if (!rows || rows.length === 0) {
         return {
           valid: false,
-          message: 'Token tidak ditemukan di database Supabase Cloud sekolah.',
+          message: `Token "${cleanToken}" tidak ditemukan di tabel "${tableName}" database Supabase Cloud. Pastikan kode cocok dan Policy RLS SELECT diizinkan.`,
         };
       }
 
@@ -245,7 +339,7 @@ export const supabaseService = {
       if (!appToken.isActive) {
         return {
           valid: false,
-          message: 'Token ini telah dinonaktifkan oleh administrator.',
+          message: 'Token ini terdaftar di Supabase namun statusnya dinonaktifkan (is_active = false) oleh administrator.',
           tokenData: appToken,
         };
       }
@@ -274,9 +368,12 @@ export const supabaseService = {
         message: `Akses berhasil diverifikasi via Supabase Cloud! Selamat datang, ${appToken.label}.`,
         tokenData: { ...appToken, usedCount: appToken.usedCount + 1 },
       };
-    } catch (e) {
-      console.warn('Network error checking Supabase token, fallback to local:', e);
-      return null;
+    } catch (e: any) {
+      console.warn('Network error checking Supabase token:', e);
+      return {
+        valid: false,
+        message: `Gagal terhubung ke database Supabase Cloud: ${e?.message || 'Periksa koneksi internet Anda.'}`,
+      };
     }
   },
 

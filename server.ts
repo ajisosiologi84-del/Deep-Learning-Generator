@@ -1,6 +1,7 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
 
@@ -25,6 +26,234 @@ app.get('/api/health', (req, res) => {
     hasApiKey: !!apiKey,
     model: 'gemini-3.8-flash',
   });
+});
+
+// Global Cloud Configuration Storage (Multi-Browser Persistence for Supabase & Webhooks)
+const CONFIG_DIR = path.join(__dirname, 'data');
+const CONFIG_FILE = path.join(CONFIG_DIR, 'cloud_config.json');
+
+interface ServerCloudConfig {
+  supabase: {
+    supabaseUrl: string;
+    supabaseAnonKey: string;
+    tableName: string;
+    enabled: boolean;
+  };
+  webhook: {
+    webhookUrl: string;
+    enabled: boolean;
+    logOnLogin: boolean;
+    logOnGenerateRpp: boolean;
+    logOnExportDoc: boolean;
+  };
+}
+
+const defaultServerConfig: ServerCloudConfig = {
+  supabase: {
+    supabaseUrl: (process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '').trim(),
+    supabaseAnonKey: (process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || '').trim(),
+    tableName: 'app_tokens',
+    enabled: Boolean(process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL),
+  },
+  webhook: {
+    webhookUrl: (process.env.VITE_GOOGLE_SCRIPT_WEBHOOK_URL || process.env.GOOGLE_SCRIPT_WEBHOOK_URL || '').trim(),
+    enabled: Boolean(process.env.VITE_GOOGLE_SCRIPT_WEBHOOK_URL || process.env.GOOGLE_SCRIPT_WEBHOOK_URL),
+    logOnLogin: true,
+    logOnGenerateRpp: true,
+    logOnExportDoc: true,
+  },
+};
+
+let inMemoryCloudConfig: ServerCloudConfig = { ...defaultServerConfig };
+
+function loadServerCloudConfig(): ServerCloudConfig {
+  try {
+    if (fs.existsSync(CONFIG_FILE)) {
+      const content = fs.readFileSync(CONFIG_FILE, 'utf-8');
+      const parsed = JSON.parse(content);
+      inMemoryCloudConfig = {
+        supabase: { ...defaultServerConfig.supabase, ...(parsed.supabase || {}) },
+        webhook: { ...defaultServerConfig.webhook, ...(parsed.webhook || {}) },
+      };
+      return inMemoryCloudConfig;
+    }
+  } catch (err) {
+    console.warn('Could not read cloud_config.json, using defaults:', err);
+  }
+  return inMemoryCloudConfig;
+}
+
+function saveServerCloudConfig(updates: Partial<ServerCloudConfig>): ServerCloudConfig {
+  try {
+    if (!fs.existsSync(CONFIG_DIR)) {
+      fs.mkdirSync(CONFIG_DIR, { recursive: true });
+    }
+    const current = loadServerCloudConfig();
+    const merged: ServerCloudConfig = {
+      supabase: { ...current.supabase, ...(updates.supabase || {}) },
+      webhook: { ...current.webhook, ...(updates.webhook || {}) },
+    };
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(merged, null, 2), 'utf-8');
+    inMemoryCloudConfig = merged;
+    return merged;
+  } catch (err) {
+    console.error('Failed to write cloud_config.json:', err);
+    inMemoryCloudConfig = {
+      supabase: { ...inMemoryCloudConfig.supabase, ...(updates.supabase || {}) },
+      webhook: { ...inMemoryCloudConfig.webhook, ...(updates.webhook || {}) },
+    };
+    return inMemoryCloudConfig;
+  }
+}
+
+// Initial load
+loadServerCloudConfig();
+
+// Cloud Config Endpoints: Allow any browser to inherit saved Supabase & Google Apps Script configuration
+app.get('/api/cloud-config', (req, res) => {
+  res.json(loadServerCloudConfig());
+});
+
+app.post('/api/cloud-config', (req, res) => {
+  const updated = saveServerCloudConfig(req.body);
+  res.json({ success: true, config: updated });
+});
+
+// Server-side Token Validation Proxy: Solves all browser CORS, mobile, and adblocker issues
+app.post('/api/validate-token', async (req, res) => {
+  const token = (req.body?.token || '').trim();
+  if (!token) {
+    return res.status(400).json({ valid: false, message: 'Kode token wajib diisi.' });
+  }
+
+  const config = loadServerCloudConfig();
+  const rawUrl = (config.supabase?.supabaseUrl || process.env.VITE_SUPABASE_URL || 'https://ozprerxcoxyhfclnbioc.supabase.co').trim();
+  const rawKey = (config.supabase?.supabaseAnonKey || process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im96cHJlcnhjb3h5aGZjbG5iaW9jIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE1Mzc5MjIsImV4cCI6MjEwNzExMzkyMn0.Bye79O7mcfz6gjHGDAFcqUihGW03mpUxy4QkALrbl9s').trim();
+  const tableName = config.supabase?.tableName || 'app_tokens';
+  const cleanUrl = rawUrl.replace(/\/+$/, '');
+
+  if (!cleanUrl || !rawKey) {
+    return res.json({ valid: false, message: 'Supabase belum terkonfigurasi di server.' });
+  }
+
+  try {
+    const endpoint = `${cleanUrl}/rest/v1/${tableName}?token=ilike.${encodeURIComponent(token)}&select=*`;
+    const response = await fetch(endpoint, {
+      headers: {
+        'apikey': rawKey,
+        'Authorization': `Bearer ${rawKey}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      return res.json({
+        valid: false,
+        message: `Koneksi Supabase error (${response.status}): ${response.statusText}`,
+      });
+    }
+
+    const rows: any = await response.json();
+    if (!rows || !Array.isArray(rows) || rows.length === 0) {
+      return res.json({
+        valid: false,
+        message: 'Token tidak valid atau tidak terdaftar dalam sistem database.',
+      });
+    }
+
+    const row = rows[0];
+    const appToken = {
+      id: row.id,
+      token: row.token,
+      label: row.label,
+      schoolName: row.school_name || '',
+      role: row.role || 'guru',
+      maxUses: typeof row.max_uses === 'number' ? row.max_uses : -1,
+      usedCount: typeof row.used_count === 'number' ? row.used_count : 0,
+      expiresAt: row.expires_at || null,
+      isActive: Boolean(row.is_active),
+      createdAt: row.created_at || new Date().toISOString(),
+      notes: row.notes || '',
+    };
+
+    if (!appToken.isActive) {
+      return res.json({
+        valid: false,
+        message: 'Token ini telah dinonaktifkan oleh Administrator.',
+        tokenData: appToken,
+      });
+    }
+
+    if (appToken.expiresAt && new Date() > new Date(appToken.expiresAt)) {
+      return res.json({
+        valid: false,
+        message: `Masa berlaku token telah habis pada ${new Date(appToken.expiresAt).toLocaleDateString('id-ID')}.`,
+        tokenData: appToken,
+      });
+    }
+
+    if (appToken.maxUses > 0 && appToken.usedCount >= appToken.maxUses) {
+      return res.json({
+        valid: false,
+        message: `Batas kuota penggunaan token (${appToken.maxUses}x) telah habis.`,
+        tokenData: appToken,
+      });
+    }
+
+    // Update usage asynchronously in background
+    fetch(`${cleanUrl}/rest/v1/${tableName}?token=eq.${encodeURIComponent(row.token)}`, {
+      method: 'PATCH',
+      headers: {
+        'apikey': rawKey,
+        'Authorization': `Bearer ${rawKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ used_count: appToken.usedCount + 1 }),
+    }).catch(console.warn);
+
+    return res.json({
+      valid: true,
+      message: `Akses berhasil diverifikasi! Selamat datang, ${appToken.label}.`,
+      tokenData: { ...appToken, usedCount: appToken.usedCount + 1 },
+    });
+  } catch (err: any) {
+    return res.json({
+      valid: false,
+      message: `Gagal memverifikasi token ke Supabase Cloud: ${err?.message || 'Koneksi terputus'}`,
+    });
+  }
+});
+
+// Server-side Fetch All Cloud Tokens: Allows any browser to sync all 33 tokens immediately
+app.get('/api/tokens/cloud', async (req, res) => {
+  const config = loadServerCloudConfig();
+  const rawUrl = (config.supabase?.supabaseUrl || process.env.VITE_SUPABASE_URL || 'https://ozprerxcoxyhfclnbioc.supabase.co').trim();
+  const rawKey = (config.supabase?.supabaseAnonKey || process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im96cHJlcnhjb3h5aGZjbG5iaW9jIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE1Mzc5MjIsImV4cCI6MjEwNzExMzkyMn0.Bye79O7mcfz6gjHGDAFcqUihGW03mpUxy4QkALrbl9s').trim();
+  const tableName = config.supabase?.tableName || 'app_tokens';
+  const cleanUrl = rawUrl.replace(/\/+$/, '');
+
+  if (!cleanUrl || !rawKey) {
+    return res.json({ success: false, tokens: [] });
+  }
+
+  try {
+    const endpoint = `${cleanUrl}/rest/v1/${tableName}?select=*&order=created_at.desc`;
+    const response = await fetch(endpoint, {
+      headers: {
+        'apikey': rawKey,
+        'Authorization': `Bearer ${rawKey}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (response.ok) {
+      const rows = await response.json();
+      return res.json({ success: true, tokens: rows });
+    }
+    return res.json({ success: false, tokens: [] });
+  } catch (err) {
+    return res.json({ success: false, tokens: [] });
+  }
 });
 
 // Prompt generator based on official BSKAP Kurikulum Merdeka Deep Learning (M3)

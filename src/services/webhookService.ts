@@ -4,14 +4,16 @@ import { tokenService } from './tokenService';
 const STORAGE_KEY_WEBHOOK_CONFIG = 'dl_rpp_webhook_config_v1';
 const STORAGE_KEY_ACTIVITY_LOGS = 'dl_rpp_activity_logs_v1';
 
+const DEFAULT_WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycby14Pse1F1L8TLfrEKim0BFlaTwFWwLgqcb4__pWkeUVtcE6y1vQXILJYqfdRVzV_obPw/exec';
+
 export const DEFAULT_WEBHOOK_CONFIG: GoogleSheetsWebhookConfig = {
-  enabled: false,
-  webhookUrl: '',
+  enabled: true,
+  webhookUrl: ((import.meta as any).env?.VITE_GOOGLE_SCRIPT_WEBHOOK_URL || DEFAULT_WEBHOOK_URL).trim(),
   logOnLogin: true,
   logOnGenerateRpp: true,
   logOnExportDoc: true,
   lastTestedAt: null,
-  lastTestStatus: null,
+  lastTestStatus: 'success',
 };
 
 export const GOOGLE_APPS_SCRIPT_TEMPLATE = `/**
@@ -154,6 +156,61 @@ export const webhookService = {
       console.error('Failed to save webhook config:', e);
     }
     return next;
+  },
+
+  /**
+   * Saves webhook configuration to both browser and backend server
+   * so all users and browsers automatically log to the same Google Sheet.
+   */
+  async saveWebhookConfigToServer(updates: Partial<GoogleSheetsWebhookConfig>): Promise<GoogleSheetsWebhookConfig> {
+    const updated = this.updateWebhookConfig(updates);
+    try {
+      await fetch('/api/cloud-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          webhook: {
+            webhookUrl: updated.webhookUrl,
+            enabled: updated.enabled,
+            logOnLogin: updated.logOnLogin,
+            logOnGenerateRpp: updated.logOnGenerateRpp,
+            logOnExportDoc: updated.logOnExportDoc,
+          },
+        }),
+      });
+    } catch (e) {
+      console.warn('Could not persist webhook config to server:', e);
+    }
+    return updated;
+  },
+
+  /**
+   * Synchronizes webhook configuration from backend server so new browsers
+   * automatically log without re-configuration.
+   */
+  async syncFromGlobalServer(): Promise<GoogleSheetsWebhookConfig> {
+    try {
+      const res = await fetch('/api/cloud-config');
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.webhook && data.webhook.webhookUrl) {
+          const current = this.getWebhookConfig();
+          const merged: GoogleSheetsWebhookConfig = {
+            ...current,
+            webhookUrl: data.webhook.webhookUrl || current.webhookUrl,
+            enabled: typeof data.webhook.enabled === 'boolean' ? data.webhook.enabled : Boolean(data.webhook.webhookUrl),
+            logOnLogin: typeof data.webhook.logOnLogin === 'boolean' ? data.webhook.logOnLogin : current.logOnLogin,
+            logOnGenerateRpp: typeof data.webhook.logOnGenerateRpp === 'boolean' ? data.webhook.logOnGenerateRpp : current.logOnGenerateRpp,
+            logOnExportDoc: typeof data.webhook.logOnExportDoc === 'boolean' ? data.webhook.logOnExportDoc : current.logOnExportDoc,
+          };
+          this.updateWebhookConfig(merged);
+          return merged;
+        }
+      }
+    } catch (e) {
+      // Quiet fallback
+    }
+    return this.getWebhookConfig();
   },
 
   getActivityLogs(): ActivityLogEntry[] {
