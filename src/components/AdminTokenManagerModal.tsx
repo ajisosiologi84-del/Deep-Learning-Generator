@@ -32,11 +32,13 @@ import {
   HelpCircle,
   Database,
   Globe,
+  Printer,
 } from 'lucide-react';
 import { tokenService } from '../services/tokenService';
 import { webhookService, GOOGLE_APPS_SCRIPT_TEMPLATE } from '../services/webhookService';
 import { supabaseService, SUPABASE_SQL_SETUP } from '../services/supabaseService';
 import { AppToken, AdminConfig, GoogleSheetsWebhookConfig, ActivityLogEntry, SupabaseConfig } from '../types/token';
+import { TokenCardPrintModal } from './TokenCardPrintModal';
 
 interface AdminTokenManagerModalProps {
   isOpen: boolean;
@@ -51,8 +53,12 @@ export const AdminTokenManagerModal: React.FC<AdminTokenManagerModalProps> = ({
 }) => {
   const [tokens, setTokens] = useState<AppToken[]>([]);
   const [adminConfig, setAdminConfig] = useState<AdminConfig>(tokenService.getAdminConfig());
-  const [activeTab, setActiveTab] = useState<'list' | 'create' | 'batch' | 'settings' | 'sheets' | 'supabase'>('list');
+  const [activeTab, setActiveTab] = useState<'list' | 'create' | 'batch' | 'print' | 'settings' | 'sheets' | 'supabase'>('list');
   const [copiedTokenId, setCopiedTokenId] = useState<string | null>(null);
+
+  // Token Card Print Modal State
+  const [printModalOpen, setPrintModalOpen] = useState<boolean>(false);
+  const [selectedTokenForPrint, setSelectedTokenForPrint] = useState<string | null>(null);
 
   // Webhook Google Sheets State
   const [webhookConfig, setWebhookConfig] = useState<GoogleSheetsWebhookConfig>(webhookService.getWebhookConfig());
@@ -513,6 +519,24 @@ export const AdminTokenManagerModal: React.FC<AdminTokenManagerModalProps> = ({
 
             <button
               type="button"
+              onClick={() => {
+                setActiveTab('print');
+                setSelectedTokenForPrint(null);
+                setPrintModalOpen(true);
+              }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
+                activeTab === 'print'
+                  ? 'bg-amber-400 text-slate-950 shadow-xs ring-1 ring-amber-500'
+                  : 'bg-amber-100/90 text-amber-950 hover:bg-amber-200 border border-amber-300/80'
+              }`}
+              title="Buka menu cetak kartu token kertas F4 atau A4"
+            >
+              <Printer className="w-3.5 h-3.5 text-amber-800" />
+              <span>🖨️ Cetak Kartu Token (F4/A4)</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => setActiveTab('settings')}
               className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
                 activeTab === 'settings'
@@ -591,7 +615,19 @@ export const AdminTokenManagerModal: React.FC<AdminTokenManagerModalProps> = ({
                     Salin atau bagikan token ini kepada guru agar dapat membuka kunci aplikasi
                   </p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedTokenForPrint(null);
+                      setPrintModalOpen(true);
+                    }}
+                    className="px-3 py-1.5 text-xs font-bold text-amber-950 bg-amber-400 hover:bg-amber-300 rounded-lg flex items-center gap-1.5 shadow-xs transition"
+                    title="Cetak lembaran kartu token untuk seluruh guru (Format Kertas F4 / A4)"
+                  >
+                    <Printer className="w-3.5 h-3.5 text-slate-950" />
+                    <span>Cetak Kartu Token (F4/A4)</span>
+                  </button>
                   <button
                     type="button"
                     onClick={handleExportJson}
@@ -702,6 +738,19 @@ export const AdminTokenManagerModal: React.FC<AdminTokenManagerModalProps> = ({
                       >
                         <Share2 className="w-3.5 h-3.5 text-emerald-600" />
                         <span>Kirim WA</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedTokenForPrint(item.id);
+                          setPrintModalOpen(true);
+                        }}
+                        className="px-2.5 py-1.5 text-xs font-semibold text-amber-950 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-lg flex items-center gap-1 transition"
+                        title="Cetak kartu fisik untuk token ini (F4 / A4)"
+                      >
+                        <Printer className="w-3.5 h-3.5 text-amber-800" />
+                        <span>Cetak</span>
                       </button>
 
                       <button
@@ -928,6 +977,109 @@ export const AdminTokenManagerModal: React.FC<AdminTokenManagerModalProps> = ({
                 <span>Eksekusi Pembuatan {batchCount} Token Massal</span>
               </button>
             </form>
+          )}
+
+          {activeTab === 'print' && (
+            <div className="space-y-6 max-w-4xl mx-auto animate-fadeIn">
+              {/* Hero Banner for Token Card Printing */}
+              <div className="p-6 bg-gradient-to-br from-amber-500 via-amber-600 to-amber-700 text-slate-950 rounded-3xl shadow-lg relative overflow-hidden">
+                <div className="relative z-10 space-y-3">
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-slate-950 text-amber-300 uppercase tracking-wider">
+                    <Printer className="w-3.5 h-3.5" />
+                    <span>Fitur Baru Administrator</span>
+                  </div>
+                  <h3 className="text-xl sm:text-2xl font-black tracking-tight text-slate-950">
+                    Cetak Kartu Token Fisik (Kertas F4 / Folio & A4)
+                  </h3>
+                  <p className="text-xs sm:text-sm text-slate-900/90 font-medium max-w-2xl leading-relaxed">
+                    Fitur ini memungkinkan Anda mencetak lembaran kartu peserta/guru dalam format resmi berstandar nasional. Dilengkapi dengan <strong>Kode Akses Unik</strong>, <strong>QR Code Login Otomatis</strong>, <strong>Kop Satuan Pendidikan</strong>, dan <strong>Garis Potong Gunting (✂)</strong> yang rapi.
+                  </p>
+
+                  <div className="pt-2 flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedTokenForPrint(null);
+                        setPrintModalOpen(true);
+                      }}
+                      className="px-5 py-3 rounded-2xl bg-slate-950 hover:bg-slate-900 text-white font-extrabold text-xs sm:text-sm transition flex items-center gap-2 shadow-md hover:shadow-xl cursor-pointer"
+                    >
+                      <Printer className="w-4 h-4 text-amber-400" />
+                      <span>Buka Studio Cetak Kartu Sekarang ({tokens.length} Token Tersedia)</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Format & Specification Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                
+                {/* Paper F4 Box */}
+                <div className="p-5 bg-white rounded-2xl border-2 border-emerald-500/40 shadow-xs space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="font-extrabold text-sm text-emerald-950 flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-emerald-600" />
+                      Ukuran Kertas F4 / Folio (HVS)
+                    </span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                      Standar Sekolah RI
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    Dimensi <strong>215 mm × 330 mm</strong>. Sangat pas untuk kertas HVS Folio/F4 yang umum digunakan oleh sekolah, madrasah, dan kantor dinas pendidikan di seluruh Indonesia.
+                  </p>
+                  <ul className="text-xs text-slate-700 space-y-1.5 list-disc list-inside">
+                    <li>Kapasitas 8 kartu/lembar (ID Card Standar ~95 × 76 mm)</li>
+                    <li>Kapasitas 10 kartu/lembar (Format Saku Hemat ~95 × 60 mm)</li>
+                    <li>Margin seimbang 6–8 mm anti terpotong printer</li>
+                  </ul>
+                </div>
+
+                {/* Paper A4 Box */}
+                <div className="p-5 bg-white rounded-2xl border-2 border-blue-500/40 shadow-xs space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="font-extrabold text-sm text-blue-950 flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-blue-600" />
+                      Ukuran Kertas A4 Internasional
+                    </span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800">
+                      Standar Kantor / PDF
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    Dimensi <strong>210 mm × 297 mm</strong>. Format standar internasional yang didukung oleh semua printer desktop dan ideal untuk disimpan menjadi file dokumen PDF.
+                  </p>
+                  <ul className="text-xs text-slate-700 space-y-1.5 list-disc list-inside">
+                    <li>Kapasitas 8 kartu/lembar (Ukuran kartu ~94 × 68 mm)</li>
+                    <li>Kapasitas 4 kartu/lembar (Ukuran besar VIP ~100 × 135 mm)</li>
+                    <li>Kompatibel langsung dengan simpan PDF satu klik</li>
+                  </ul>
+                </div>
+
+              </div>
+
+              {/* Features Overview */}
+              <div className="p-5 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
+                <h4 className="text-xs font-black uppercase tracking-wider text-slate-700">
+                  Keunggulan Kartu Token BSKAP Deep Learning:
+                </h4>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                  <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-1">
+                    <span className="font-bold text-slate-900 block">📱 QR Code Scan Cepat</span>
+                    <p className="text-[11px] text-slate-500">Guru tinggal memindai QR lewat kamera gawai untuk otomatis membuka dan masuk aplikasi.</p>
+                  </div>
+                  <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-1">
+                    <span className="font-bold text-slate-900 block">✂ Garis Potong Gunting</span>
+                    <p className="text-[11px] text-slate-500">Dilengkapi batas garis putus-putus (*dashed line*) agar panitia dapat menggunting dengan rapi dan presisi.</p>
+                  </div>
+                  <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-1">
+                    <span className="font-bold text-slate-900 block">🎨 4 Pilihan Tema Desain</span>
+                    <p className="text-[11px] text-slate-500">Tersedia Emerald Kemdikbud, Biru Safir Edukasi, Ungu Inovatif, hingga Monokrom Hitam-Putih hemat tinta.</p>
+                  </div>
+                </div>
+              </div>
+
+            </div>
           )}
 
           {activeTab === 'settings' && (
@@ -1592,6 +1744,14 @@ export const AdminTokenManagerModal: React.FC<AdminTokenManagerModalProps> = ({
         </div>
 
       </div>
+
+      {/* Token Card Print Modal (Full Page F4 / A4 Studio) */}
+      <TokenCardPrintModal
+        isOpen={printModalOpen}
+        onClose={() => setPrintModalOpen(false)}
+        tokens={tokens}
+        preSelectedTokenId={selectedTokenForPrint}
+      />
     </div>
   );
 };

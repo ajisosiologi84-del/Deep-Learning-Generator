@@ -107,7 +107,8 @@
     display: none !important;
   }
 
-  #official-rpp-document {
+  /* Normal RPP printing behavior when NOT printing token cards */
+  body:not(.printing-token-cards-active) #official-rpp-document {
     display: block !important;
     visibility: visible !important;
     position: static !important;
@@ -115,6 +116,54 @@
     max-width: 100% !important;
     margin: 0 !important;
     padding: 0 !important;
+  }
+
+  /* Token Card Print Sheet Mode: Hide modal dialog wrapper, show token cards only */
+  body.printing-token-cards-active #official-rpp-document,
+  body.printing-token-cards-active header,
+  body.printing-token-cards-active nav,
+  body.printing-token-cards-active aside,
+  body.printing-token-cards-active footer,
+  body.printing-token-cards-active .token-card-modal-chrome {
+    display: none !important;
+  }
+
+  body.printing-token-cards-active,
+  body.printing-token-cards-active #root {
+    background: #ffffff !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+  }
+
+  body.printing-token-cards-active #token-card-print-container {
+    display: block !important;
+    visibility: visible !important;
+    position: static !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  body.printing-token-cards-active .token-print-sheet {
+    display: block !important;
+    box-sizing: border-box !important;
+    width: 100% !important;
+    background: #ffffff !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    page-break-after: always !important;
+    break-after: page !important;
+  }
+
+  body.printing-token-cards-active .token-print-sheet:last-child {
+    page-break-after: avoid !important;
+    break-after: avoid !important;
   }
 
   .print-page, .pdf-page {

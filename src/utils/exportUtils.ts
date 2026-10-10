@@ -1297,3 +1297,67 @@ export async function downloadAsPDF(
     throw error;
   }
 }
+
+/**
+ * Downloads Token Cards as standard F4 or A4 PDF document
+ */
+export async function downloadTokenCardsAsPDF(
+  container: HTMLElement | null,
+  filename: string,
+  paperSize: 'F4' | 'A4',
+  orientation: 'portrait' | 'landscape',
+  onProgress?: (status: string) => void
+): Promise<boolean> {
+  if (!container) {
+    throw new Error('Elemen lembar kartu tidak ditemukan.');
+  }
+
+  try {
+    onProgress?.(`Mempersiapkan dokumen PDF format ${paperSize}...`);
+
+    const sheetElements = Array.from(container.querySelectorAll<HTMLElement>('.token-print-sheet'));
+    const elementsToRender = sheetElements.length > 0 ? sheetElements : [container];
+
+    const isPortrait = orientation === 'portrait';
+    const pageWidthMm = paperSize === 'F4' ? (isPortrait ? 215 : 330) : (isPortrait ? 210 : 297);
+    const pageHeightMm = paperSize === 'F4' ? (isPortrait ? 330 : 215) : (isPortrait ? 297 : 210);
+
+    const pdf = new jsPDF({
+      orientation: isPortrait ? 'p' : 'l',
+      unit: 'mm',
+      format: paperSize === 'F4' ? (isPortrait ? [215, 330] : [330, 215]) : (isPortrait ? [210, 297] : [297, 210]),
+    });
+
+    const margin = 6; // 6mm margin
+    const printableWidth = pageWidthMm - margin * 2;
+    const printableHeight = pageHeightMm - margin * 2;
+
+    for (let i = 0; i < elementsToRender.length; i++) {
+      const sheetEl = elementsToRender[i];
+      onProgress?.(`Memproses lembar ${i + 1} dari ${elementsToRender.length}...`);
+
+      const canvas = await toCanvas(sheetEl, {
+        pixelRatio: 2,
+        backgroundColor: '#ffffff',
+        fontEmbedCSS: ' ',
+        skipFonts: true,
+      });
+
+      if (i > 0) {
+        pdf.addPage(paperSize === 'F4' ? (isPortrait ? [215, 330] : [330, 215]) : (isPortrait ? [210, 297] : [297, 210]), isPortrait ? 'p' : 'l');
+      }
+
+      const imgData = canvas.toDataURL('image/jpeg', 0.98);
+      pdf.addImage(imgData, 'JPEG', margin, margin, printableWidth, printableHeight);
+    }
+
+    onProgress?.('Menyimpan berkas PDF...');
+    const safeFilename = filename.endsWith('.pdf') ? filename : `${filename}.pdf`;
+    pdf.save(safeFilename);
+    return true;
+  } catch (error) {
+    console.error('Failed to generate Token Cards PDF:', error);
+    throw error;
+  }
+}
+

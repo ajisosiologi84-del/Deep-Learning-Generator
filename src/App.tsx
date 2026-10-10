@@ -60,6 +60,46 @@ export default function App() {
     supabaseService.syncFromGlobalServer().catch(() => {});
     webhookService.syncFromGlobalServer().catch(() => {});
     tokenService.syncCloudTokens().catch(() => {});
+
+    // Check for ?token=... in URL (e.g. from scanned printed Token Card QR code)
+    const params = new URLSearchParams(window.location.search);
+    const tokenFromUrl = params.get('token');
+    if (tokenFromUrl && !activeSession) {
+      const validateFromUrl = async () => {
+        try {
+          const res = await tokenService.validateTokenAsync(tokenFromUrl);
+          if (res.valid && res.tokenData) {
+            const session: TokenSession = {
+              token: res.tokenData.token,
+              label: res.tokenData.label,
+              role: res.tokenData.role,
+              schoolName: res.tokenData.schoolName,
+              loginTime: new Date().toISOString(),
+              isAdmin: res.isAdminPasscode || false,
+            };
+            tokenService.setActiveSession(session);
+            setActiveSession(session);
+            setLoginModalOpen(false);
+            // Record login activity
+            webhookService.logActivity({
+              actionType: 'LOGIN',
+              userLabel: session.label,
+              tokenCode: session.token,
+              schoolName: session.schoolName,
+              role: session.role,
+              details: `Login otomatis via scan QR Kartu Token: ${session.token}`,
+              status: 'SUCCESS',
+            });
+            // Clean up the URL query parameter without reloading page
+            const newUrl = window.location.pathname;
+            window.history.replaceState({}, '', newUrl);
+          }
+        } catch (e) {
+          console.warn('Auto-login from URL token failed:', e);
+        }
+      };
+      validateFromUrl();
+    }
   }, []);
 
   // Handle User Logout explicitly or automatically
